@@ -1,0 +1,5 @@
+bandit
+black
+diff-cover
+flake8
+isort

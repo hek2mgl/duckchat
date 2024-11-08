@@ -6,6 +6,7 @@ build-backend = "hatchling.build"
 name = "duckchat"
 version = "0.1.0"
 dependencies = [
+    "google_speech",
     "requests",
     "rich",
 ]
@@ -15,7 +16,7 @@ authors = [
 ]
 license = { file = "LICENSE" }
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.6"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",

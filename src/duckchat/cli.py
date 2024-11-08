@@ -3,23 +3,31 @@ CLI based AI chat application.
 """
 
 import argparse
+import atexit
+import code
 import json
 import logging
 import os
+import re
+import readline
 import subprocess
 import sys
+import textwrap
 
 import requests
+from google_speech import Speech
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.prompt import Prompt
+from rich.text import Text
 
+from duckchat import __version__
 
 # Dictionary mapping model aliases to their respective identifiers.
 models = {
     "gpt-4o-mini": "gpt-4o-mini",
     "claude-3-haiku": "claude-3-haiku-20240307",
-    "llama": "claude-3-haiku-20240307",
+    "llama": "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
     "mixtral": "mistralai/Mixtral-8x7B-Instruct-v0.1",
 }
 
@@ -34,40 +42,68 @@ def create_argparser():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--model",
-        help="The model which should be used for the chat. The list of "
-        "available models can be print with the --list-models option",
+        help="the model to be used for the chat. The list of "
+        "available models can be printed with the --list-models option",
         default="gpt-4o-mini",
     )
 
     parser.add_argument(
         "--list-models",
-        help="List the models which can be used with the --model option and "
-        "then exit the program. Do not start a chat.",
+        help="list the models that can be used with the --model option and "
+        "then exit the program. Do not start a chat",
         action="store_true",
     )
 
     parser.add_argument(
         "-f",
         "--file",
-        help="Append contents of file to prompt",
+        help="append contents of file to prompt",
     )
 
     parser.add_argument(
         "--debug",
-        help="Add debug output",
+        help="print debug output",
         action="store_true",
     )
 
     parser.add_argument(
-        "--oneshot",
+        "-s",
+        "--one-shot",
         metavar="PROMPT",
-        help="Run prompt and exit",
+        help="execute the prompt and exit",
+    )
+
+    parser.add_argument(
+        "--tts",
+        action="store_true",
+        help="enable text-to-speech (experimental)",
+    )
+
+    parser.add_argument(
+        "--tts-lang",
+        help="text-to-speech language. (en for English, de for German)"
+        " default is en",
+        default="en",
+    )
+
+    parser.add_argument(
+        "--tts-rate",
+        help="rate of the text-to-speech voice",
+        type=float,
+        default=1.1,
+    )
+
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=__version__,
     )
 
     parser.add_argument(
         "--print-file",
-        help="When the AI is supposed a file, print only this file."
-        " Useful for patching and in place edits",
+        help="(try to) extract a file from the AI answer. this works when the"
+        " answer contains exactly one code block. intended for AI-driven"
+        " in-place editing of a file (experimental)",
         action="store_true",
     )
 
@@ -83,14 +119,16 @@ class Output(Console):
 
     def hello(self, args):
         """Print a welcome message to the console."""
-        self.print("""[cyan]
+        self.print(
+            """[cyan]
  ____             _       ____ _           _
-|  _ \ _   _  ___| | __  / ___| |__   __ _| |_
-| | | | | | |/ __| |/ / | |   | '_ \ / _` | __|
+|  _ \\ _   _  ___| | __  / ___| |__   __ _| |_
+| | | | | | |/ __| |/ / | |   | '_ \\ / _` | __|
 | |_| | |_| | (__|   <  | |___| | | | (_| | |_
-|____/ \__,_|\___|_|\_\  \____|_| |_|\__,_|\__|
+|____/ \\__,_|\\___|_|\\_\\  \\____|_| |_|\\__,_|\\__|
 
-                   """)
+                   """
+        )
         self.print(f"[cyan]Welcome to DuckChat! Your assistant is {args.model}")
         self.print("---")
 
@@ -120,8 +158,8 @@ class Output(Console):
             args (argparse.Namespace): The parsed command-line arguments.
         """
         buffer = ""
-        for line in response.iter_lines(decode_unicode=True):
-            line = line.strip()
+        for line in response.iter_lines():
+            line = line.decode("utf8").strip()
             chat.log.debug("read line %s", line)
             if not line:
                 continue
@@ -137,7 +175,7 @@ class Output(Console):
 
         chat.messages.append({"content": msg, "role": "assistant"})
 
-        new_buffer = ""
+        new_buffer = []
         printing = False
         for ln, line in enumerate(buffer.split("\n")):
             if "```" in line and not printing and args.print_file:
@@ -149,10 +187,28 @@ class Output(Console):
                 continue
 
             if printing or not args.print_file:
-                new_buffer += line + "\n"
+                new_buffer.append(line)
 
-        Output().print(f"🤖 [cyan]{args.model}[default]: ", end="")
-        Output().print(Markdown(new_buffer))
+        Output().print(f"🤖 [cyan]{chat.model}[default]: ", end="")
+
+        # Prevent printing an extra empty line when the model responds
+        # with a single line answer
+        if len(new_buffer) > 1:
+            Output().print(Markdown("\n".join(new_buffer)))
+        else:
+            print(new_buffer[0])
+
+        if args.tts:
+            speak("\n".join(new_buffer), args.tts_lang, args.tts_rate)
+
+    def print_cmd_help(self):
+        self.print(textwrap.dedent("""
+            Available commands:
+
+            listmodels - print available models
+            setmodel [MODEL] - set the model. with no argument, print the current model
+            help - display this help
+        """))
 
 
 class Chat:
@@ -246,7 +302,9 @@ class Chat:
         )
 
         response.raise_for_status()
-
+        loggers = [logging.getLogger(name) for name in logging.root.manager.loggerDict]
+        headers = dict(zip(response.headers.keys(), response.headers.values()))
+        self.log.debug("response headers %s", json.dumps(headers, indent=2))
         new_vqd = response.headers["x-vqd-4"]
         self.log.debug("vqd changed: %s -> %s", self.vqd, new_vqd)
         self.vqd = new_vqd
@@ -273,24 +331,59 @@ def init_logging(args):
     return log
 
 
-def input_prompt():
+class HistoryConsole(code.InteractiveConsole):
     """
-    Prompt the user for input until a non-empty response is received.
-
-    Continuously asks the user for input until they provide a non-empty string.
-    Displays an error message if the input is empty.
-
-    Returns:
-        str: The user's input prompt.
+    Derived from an example in the Python documentation
+    see: https://docs.python.org/3/library/readline.html
     """
-    while True:
-        username = os.environ.get("USER", "me")
-        prompt = Prompt.ask(f"🦆 [yellow]{username}").strip()
-        if not prompt:
-            Output().print("[dark_red]Your prompt is empty!")
-            continue
-        Output().print("---")
-        return prompt
+
+    def __init__(
+        self,
+        locals=None,
+        filename="<console>",
+        histfile=os.path.expanduser("~/.duckchat-history"),
+    ):
+        code.InteractiveConsole.__init__(self, locals, filename)
+        self.init_len = 0
+        self.init_history(histfile)
+
+    def init_history(self, histfile):
+        readline.parse_and_bind("tab: complete")
+        if hasattr(readline, "read_history_file"):
+            try:
+                readline.read_history_file(histfile)
+                self.init_len = readline.get_current_history_length()
+            except FileNotFoundError:
+                pass
+            atexit.register(self.save_history, histfile)
+
+    def save_history(self, histfile):
+        # create empty file if it doens't exist
+        # see: https://stackoverflow.com/a/12654798/171318
+        open(histfile, "a").close()
+        new_len = readline.get_current_history_length()
+        readline.set_history_length(1000)
+        readline.append_history_file(new_len - self.init_len, histfile)
+
+    def read_prompt(self):
+        """
+        Prompt the user for input until a non-empty response is received.
+
+        Continuously asks the user for input until they provide a non-empty string.
+        Displays an error message if the input is empty.
+
+        Returns:
+            str: The user's input prompt.
+        """
+        while True:
+            username = os.environ.get("USER", "me")
+            prompt_prefix = f"🦆 \033[33m{username}\033[0m: "
+            prompt = self.raw_input(prompt=prompt_prefix)
+            if not prompt:
+                Output().print("[dark_red]Your prompt is empty!")
+                continue
+            Output().print("---")
+            return prompt
 
 
 def readfile(filename):
@@ -311,22 +404,66 @@ def readfile(filename):
 
 def passthru(command):
     # Execute the command and display the output
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE,
-stderr=subprocess.PIPE)
+    process = subprocess.Popen(
+        command,
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
     stdout, stderr = process.communicate()
 
     # Print the output
     if stdout:
-        print(stdout.decode(), end='')  # Print standard output
+        print(stdout.decode(), end="")
     if stderr:
-        print(stderr.decode(), end='')   # Print standard error
+        print(stderr.decode(), end="")
 
 
 def spawn_shell(command_line):
     if command_line == "!":
-        subprocess.run(['bash', '-li'])
+        subprocess.run(["bash", "-li"])
     else:
-        subprocess.run(['bash', '-c', command_line[1:]], env={"PS2": "(exit to return) >"})
+        subprocess.run(
+            ["bash", "-c", command_line[1:]],
+            env={"PS2": "(exit to return) >"},
+        )
+
+
+
+def run_cmd(command_line, chat):
+    command_line = command_line[1:]
+    words = re.split(" +", command_line)
+    command = words[0]
+
+    if len(words) > 1:
+        args = words[1:]
+    else:
+        args = []
+
+    # if command == "m":
+    print(command, args)
+
+    if command == "newhist":
+        chat.messages = []
+    elif command == "listmodels":
+        Output().print_models()
+    elif command == "setmodel":
+        if len(args):
+            chat.model = models[args[0]]
+        else:
+            Output().print(chat.model)
+    elif command == "help":
+        Output().print_cmd_help()
+
+
+def speak(text, lang, rate):
+    """
+    :param lang: en=English de=German
+    """
+    speech = Speech(text, lang)
+    speech.rate = rate
+    speech.play()
+
 
 def main():
     """
@@ -339,6 +476,7 @@ def main():
     args = create_argparser().parse_args()
     init_logging(args)
     output = Output()
+    cnsl = HistoryConsole()
 
     if args.list_models:
         output.print_models()
@@ -361,22 +499,30 @@ def main():
 
     try:
         while True:
-            if args.oneshot:
-                prompt = args.oneshot
+            if args.one_shot:
+                prompt = args.one_shot
                 if args.file:
                     prompt += " " + readfile(args.file)
             else:
-                prompt = input_prompt()
-                if prompt == "\\exit":
+                prompt = cnsl.read_prompt()
+                if prompt == "exit":
                     Output().print("bye!")
                     break
 
             if prompt.startswith("!"):
                 spawn_shell(prompt)
+                if args.one_shot:
+                    break
+                continue
+
+            if prompt.startswith(":"):
+                run_cmd(prompt, chat)
+                if args.one_shot:
+                    break
                 continue
 
             Output().print_answer(chat.prompt(prompt), chat, args)
-            if args.oneshot:
+            if args.one_shot:
                 break
             Output().print("---")
 

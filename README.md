@@ -7,74 +7,112 @@
 
 ```
 
-# CLI Based AI Chat Application
-
-This is a command-line interface (CLI) based AI chat application that allows users to interact with various 
-AI models. The application supports multiple models and provides options for one-shot prompts, file input, 
-and debugging.
+This is a command-line interface (CLI) based AI chat application that allows users to interact with the various 
+AI models offered by [DuckDuckGo's AI chat](https://duck.ai).
 
 ## Features
 
-- **Model Selection**: Choose from a variety of AI models for your chat.
+- **Interactive AI chat**: at your fingertips
 - **One-shot Prompts**: Run a single prompt and exit.
-- **File Input**: Append contents of a file to your prompt.
-- **Model Listing**: List available models without starting a chat.
+- **File Input**: Append contents of a file to your prompt. (Allows to modify files easily)
+- **Run shell commands from inside the chat**
+- **Pipe shell output into the chat**
+- **Text to speech support (experimental)**: Listen to AI generated stories while coding :)!
+- **Model Selection**: Choose from a variety of AI models for your chat.
 
-## Requirements
+## Installation
 
-- Python 3.6 or higher
-- Required Python packages:
-  - `requests`
-  - `rich`
-
-These requirements will be installed together with duckchat:
-
-```bash
+```console
+git clone https://github.com/hek2mgl/duckchat
+cd duckchat
+python3 -mvenv venv
+source venv/bin/activate
 pip install .
+duckchat --help
 ```
 
 ## Usage
 
-### Command-Line Arguments
-
-- `--model`: Specify the AI model to use (default: `gpt-4o-mini`).
-- `--list-models`: List available models and exit.
-- `-f`, `--file`: Append contents of a specified file to the prompt.
-- `--debug`: Enable debug output.
-- `--oneshot`: Run a single prompt and exit.
-- `--print-file`: Print only the specified file when the AI is supposed to handle a file.
-
 ### Example Commands
 
-1. **Start a chat with the default model**:
-   ```bash
-   python chat.py
-   ```
+1. **Start an interative chat with the default model**:
+
+```console
+duckchat
+```
 
 2. **List available models**:
-   ```bash
-   python chat.py --list-models
-   ```
+
+```console
+duckchat --list-models
+```
 
 3. **Use a specific model**:
-   ```bash
-   python chat.py --model claude-3-haiku
-   ```
+
+```console
+duckchat --model claude-3-haiku
+```
 
 4. **Run a one-shot prompt**:
-   ```bash
-   python chat.py --oneshot "What is the capital of France?"
-   ```
 
-5. **Append a file to the prompt**:
-   ```bash
-   python chat.py -f my_prompt.txt
-   ```
+```console
+duckchat --oneshot "What is the capital of France?"
+# short version
+duckchat -s "What is the capital of France?"
+```
+
+5. **The prompt from the file (implies --oneshot)**:
+
+```console
+duckchat -f my_prompt.txt
+duckchat -s 'summarize' -f my_text.txt
+duckchat -s 'translate' -f my_text.txt
+duckchat -s 'remove trailing whitespace' -f my_code.py
+some_program_with_error_msg | duckchat -s 'explain' -f /dev/stdin
+```
+
+6. **Text to speech support (experimental)**
+
+duckchat supports text to speech (tts) via the Google text to speak API.
+
+Note! You need a working speaker to hear the voice.
+
+Note! The AI answers will be sent to Google's text to speech API. duckchat
+will not share account credentials or login at Google, but if you are
+concerned about your privacy, then don't use this feature!
+
+```console
+duckchat --tts
+duckchat --tts -s 'hello world'
+```
 
 6. **Enable debug output**:
-   ```bash
-   python chat.py --debug
-   ```
+
+```console
+duckchat --debug
+```
+
+## Chat commands
+
+**Start a in interactive shell**
+
+To start an interactive shell type `!`
+
+```
+you:!
+```
+
+`exit` the shell to return to the chat
+
+**Run a shell command**
+
+To run a shell commmand, type `!` and the command:
+
+```
+you:!ls -al
+you:!vi my.txt
+you:!ssh server.xyz.org
+```
 
 ## Logging
 
@@ -92,4 +130,6 @@ This project is licensed under the Apache License Version 2.0. See the LICENSE f
 
 ## Acknowledgments
 
-Thanks to DuckDuckGo for their chat application at https://duck.ai, which is the backend for this tool.
+- Thanks to [DuckDuckGo](https://duckduckgo.com) for their [AI chat](https://duck.ai), which is the backend for this tool.
+- Thanks to [textualize/rich](https://github.com/Textualize/rich) for the markdown renderer.
+
